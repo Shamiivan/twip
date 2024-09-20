@@ -1,4 +1,6 @@
+#include <fstream>
 #include <iostream>
+#include <cstdio>
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
@@ -36,6 +38,7 @@ int send_serial(const int file_desc, std::array<float, 2> &);
 // run the control step
 void control_step(const std::vector<float> &input, std::array<float, 2> &output, float dt);
 int config_serial();
+int get_data_csv(const std::string, std::vector<std::vector<float>> &);
 
 std::chrono::steady_clock::time_point prev_time;
 
@@ -43,7 +46,6 @@ const std::chrono::microseconds PERIOD(1 / FREQ * 1000000);
 
 int main(int argc, char const *argv[])
 {
-
   char cwd[255];
   if (getcwd(cwd, sizeof(cwd)) != nullptr)
   {
@@ -59,6 +61,20 @@ int main(int argc, char const *argv[])
   const int num_observations = 4;
   const int num_actions = 2;
   OnnxHandler model = OnnxHandler(path, num_observations, num_actions);
+
+  const std::string filename = "/home/models/model.csv";
+  std::vector<std::vector<float>> dataset;
+  get_data_csv(filename, dataset);
+
+  for (size_t i = 0; i < dataset.size(); i++)
+  {
+    auto row = dataset.at(i);
+    printf("\nNew row\n");
+    for (size_t j = 0; j < row.size(); j++)
+    {
+      printf("%f \t", row[j]);
+    }
+  }
 
   try
   {
@@ -76,12 +92,13 @@ int main(int argc, char const *argv[])
       auto current_time = std::chrono::steady_clock::now();
       float dt = std::chrono::duration<float>(current_time - prev_time).count();
 
-      int rs = read_serial(file_desc, imu_data);
-      if (rs < 0)
-      {
-        std::cout << "Error reading serial data\n";
-        continue;
-      }
+      // int rs = read_serial(file_desc, imu_data);
+      // if (rs < 0)
+      // {
+      //   std::cout << "Error reading serial data\n";
+      //   continue;
+      // }
+
 #ifdef ONNX_CONTROLLER
       // load buffer
       input_buffer[0] = imu_data[0];
@@ -95,23 +112,14 @@ int main(int argc, char const *argv[])
       motor_cmd[0] = prev_motor_cmd[0] = model.get_output_buffer()[0];
       motor_cmd[1] = prev_motor_cmd[1] = model.get_output_buffer()[1];
 
-      for (auto n : motor_cmd)
-      {
-        printf("%f\t", n);
-      }
-
-      for (auto n : prev_motor_cmd)
-      {
-        printf("%f\t", n);
-      }
-      printf("\n");
-
 #endif
 #ifdef PID_CONTROLLER
       control_step(imu_data, motor_cmd, dt);
 #endif
-      int sent_bytes = send_serial(file_desc, motor_cmd);
+      int sent_bytes = 0;
+      // int sent_bytes = send_serial(file_desc, motor_cmd);
 
+#ifdef DEBUG_CONTROL_LOOP
       std::ostringstream out;
       out << "Control loop :\n";
       out << "Time step : \t" << dt << "\n";
@@ -135,6 +143,7 @@ int main(int argc, char const *argv[])
       // std::this_thread::sleep_until(next_wake_time);
       // next_wake_time += PERIOD;
       std::cout << out.str() << std::endl;
+#endif
       prev_time = current_time;
     }
   }
@@ -276,4 +285,34 @@ int config_serial()
   }
 
   return file_desc;
+}
+
+// read csv and copies the line items to a vector
+int get_data_csv(const std::string filename, std::vector<std::vector<float>> &model)
+{
+  printf("Read Serial \n");
+  std::ifstream file(filename);
+  std::vector<std::vector<std::string>> data;
+  std::vector<float> cmd;
+  if (!file.is_open())
+  {
+    std::cerr << "Error opening file\n";
+    return -1;
+  }
+
+  std::string line, cell;
+  while (std::getline(file, line))
+  {
+    std::vector<std::string> row;
+    std::stringstream ss(line);
+    while (std::getline(ss, cell, ','))
+    {
+      float m_cmd = std::stof(cell);
+      cmd.push_back(m_cmd);
+    }
+
+    model.push_back(cmd);
+  }
+  std::cout << data.size() << "\n";
+  return 0;
 }
